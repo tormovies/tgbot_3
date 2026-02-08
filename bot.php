@@ -50,6 +50,24 @@ function sendMessage(
     apiRequest('sendMessage', $params);
 }
 
+function sendDocument(int $chatId, string $fileId, ?string $caption = null): void
+{
+    $params = ['chat_id' => $chatId, 'document' => $fileId];
+    if ($caption !== null && $caption !== '') {
+        $params['caption'] = $caption;
+    }
+    apiRequest('sendDocument', $params);
+}
+
+function sendPhoto(int $chatId, string $fileId, ?string $caption = null): void
+{
+    $params = ['chat_id' => $chatId, 'photo' => $fileId];
+    if ($caption !== null && $caption !== '') {
+        $params['caption'] = $caption;
+    }
+    apiRequest('sendPhoto', $params);
+}
+
 // --- Состояние (файл на пользователя) ---
 
 function getState(int $userId): array
@@ -122,7 +140,7 @@ function confirmKeyboard(): array
 function descriptionStepKeyboard(): array
 {
     return [
-        'keyboard' => [[['text' => 'Дальше →']]],
+        'keyboard' => [[['text' => 'Отправить заявку']]],
         'resize_keyboard' => true,
     ];
 }
@@ -137,8 +155,7 @@ function descriptionStepKeyboard(): array
 // /order   → handleOrderStart() — начало заказа (или кнопка «Заказать»)
 // /cancel  → handleOrderCancel()— выход из сценария заказа
 //
-// Шаги заказа: handleOrderPlatform → handleOrderType → handleOrderDescription
-//              → handleOrderContact → handleOrderConfirm
+// Шаги заказа: Platform → Type → Description (текст/файлы, кнопка «Отправить заявку») → Confirm (Да/Отмена)
 
 function handleStart(int $chatId): void
 {
@@ -245,7 +262,7 @@ function handleOrderType(int $chatId, int $userId, string $text): void
 
     $descMsg = "Опишите задачу текстом и/или прикрепите файлы (скриншот, ТЗ в PDF и т.п.).\n\n"
         . "⚠️ Максимальный размер одного файла — 20 МБ.\n\n"
-        . "Когда закончите — нажмите кнопку «Дальше →».\n\n"
+        . "Когда всё готово — нажмите «Отправить заявку».\n\n"
         . "Если файл не загружается или нужна помощь — напишите напрямую: " . ADMIN_CONTACT;
     sendMessage($chatId, $descMsg, descriptionStepKeyboard());
 }
@@ -256,15 +273,35 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    sendMessage($chatId, 'Текст принят. Добавьте ещё описание или файлы и нажмите «Дальше →».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Текст принят. Добавьте ещё описание или файлы и нажмите «Отправить заявку».', descriptionStepKeyboard());
 }
 
-function handleOrderDescriptionDone(int $chatId, int $userId): void
+function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
 {
     $state = getState($userId);
-    $state['step'] = STATE_ORDER_CONTACT;
+    $state['step'] = STATE_ORDER_CONFIRM;
+    $state['order_contact'] = ($username !== null && $username !== '')
+        ? 'Telegram: @' . $username
+        : 'Telegram ID: ' . $userId;
     setState($userId, $state);
-    sendMessage($chatId, 'Как с вами связаться? (Telegram уже есть; можно дописать email или телефон.)', removeKeyboard());
+
+    $platform = $state['order_platform'] ?? '';
+    $type = $state['order_type'] ?? '';
+    $desc = $state['order_description'] ?? '(нет текста)';
+    $contact = $state['order_contact'] ?? '';
+    $files = $state['order_files'] ?? [];
+    $fileCount = count($files);
+
+    $summary = "**Проверьте заявку:**\n\n"
+        . "Платформа: {$platform}\n"
+        . "Тип: {$type}\n"
+        . "Описание: {$desc}\n";
+    if ($fileCount > 0) {
+        $summary .= "Приложено файлов: {$fileCount}\n";
+    }
+    $summary .= "Контакт: {$contact}\n\n"
+        . "Всё верно? Отправить заявку?";
+    sendMessage($chatId, $summary, confirmKeyboard(), 'Markdown');
 }
 
 function handleOrderDescriptionDocument(int $chatId, int $userId, array $document): void
@@ -286,7 +323,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
     setState($userId, $state);
-    sendMessage($chatId, 'Файл принят. Добавьте ещё или нажмите «Дальше →».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Файл принят. Добавьте ещё или нажмите «Отправить заявку».', descriptionStepKeyboard());
 }
 
 function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
@@ -298,7 +335,7 @@ function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
     setState($userId, $state);
-    sendMessage($chatId, 'Фото принято. Добавьте ещё или нажмите «Дальше →».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Фото принято. Добавьте ещё или нажмите «Отправить заявку».', descriptionStepKeyboard());
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
@@ -359,6 +396,33 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
             $fileCount,
             mb_substr($desc, 0, 100)
         ));
+
+        // Отправка заявки в личный чат админа
+        if (defined('ADMIN_CHAT_ID') && ADMIN_CHAT_ID !== null && ADMIN_CHAT_ID !== '') {
+            $adminChatId = (int) ADMIN_CHAT_ID;
+            $adminMsg = "🆕 *Новая заявка*\n\n"
+                . "Платформа: {$platform}\n"
+                . "Тип: {$type}\n"
+                . "Описание: {$desc}\n"
+                . "Контакт: {$contact}\n"
+                . "Файлов: {$fileCount}\n"
+                . "User ID: {$userId}" . ($username !== null && $username !== '' ? " (@{$username})" : '');
+            sendMessage($adminChatId, $adminMsg, null, 'Markdown');
+
+            foreach ($state['order_files'] ?? [] as $file) {
+                $fileId = $file['file_id'] ?? '';
+                if ($fileId === '') {
+                    continue;
+                }
+                $name = $file['name'] ?? null;
+                $caption = $name !== null ? $name : null;
+                if (($file['type'] ?? '') === 'photo') {
+                    sendPhoto($adminChatId, $fileId, $caption);
+                } else {
+                    sendDocument($adminChatId, $fileId, $caption);
+                }
+            }
+        }
 
         clearState($userId);
         return;
@@ -443,20 +507,24 @@ function run(): void
                 continue;
             }
 
-            // Кнопки главного меню (без состояния заказа)
-            if ($step === null || $step === '') {
-                if (preg_match('/^(?:каталог|📋 Каталог)$/ui', trim($text))) {
-                    handleCatalog($chatId);
-                    continue;
+            // Кнопки главного меню — обрабатываем всегда (иначе в шаге заказа «Каталог» попадал бы в описание)
+            if (preg_match('/^(?:каталог|📋 Каталог)$/ui', trim($text))) {
+                if ($step !== null && $step !== '') {
+                    clearState($userId);
                 }
-                if (preg_match('/^(?:цены|💰 Цены)$/ui', trim($text))) {
-                    handlePrices($chatId);
-                    continue;
+                handleCatalog($chatId);
+                continue;
+            }
+            if (preg_match('/^(?:цены|💰 Цены)$/ui', trim($text))) {
+                if ($step !== null && $step !== '') {
+                    clearState($userId);
                 }
-                if (preg_match('/^(?:заказать|📝 Заказать)$/ui', trim($text))) {
-                    handleOrderStart($chatId, $userId);
-                    continue;
-                }
+                handlePrices($chatId);
+                continue;
+            }
+            if (preg_match('/^(?:заказать|📝 Заказать)$/ui', trim($text))) {
+                handleOrderStart($chatId, $userId);
+                continue;
             }
 
             // Сценарий заказа по шагам
@@ -474,8 +542,8 @@ function run(): void
                 } elseif (!empty($message['photo']) && is_array($message['photo'])) {
                     handleOrderDescriptionPhoto($chatId, $userId, $message['photo']);
                 } elseif ($text !== '') {
-                    if (preg_match('/^дальше\s*→?$/ui', trim($text))) {
-                        handleOrderDescriptionDone($chatId, $userId);
+                    if (preg_match('/^(?:отправить заявку|дальше\s*→?)$/ui', trim($text))) {
+                        handleOrderDescriptionDone($chatId, $userId, $username);
                     } else {
                         handleOrderDescriptionText($chatId, $userId, $text);
                     }

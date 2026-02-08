@@ -9,7 +9,9 @@ if (is_file($envFile)) {
         }
         if (strpos($line, '=') !== false) {
             [$name, $value] = explode('=', $line, 2);
-            putenv(trim($name) . '=' . trim($value, " \t\"'"));
+            $name = trim($name);
+            $value = trim($value, " \t\"'\r\n");
+            putenv($name . '=' . $value);
         }
     }
 }
@@ -23,7 +25,11 @@ if (!$token) {
 define('BOT_TOKEN', $token);
 define('DATA_DIR', __DIR__ . '/data');
 // Прямой контакт, если не получается отправить файл или есть вопросы (укажи в .env или здесь)
-define('ADMIN_CONTACT', getenv('ADMIN_CONTACT') ?: 'Telegram: @username');
+$adminContact = getenv('ADMIN_CONTACT');
+define('ADMIN_CONTACT', ($adminContact !== false && $adminContact !== '') ? $adminContact : 'Telegram: @username');
+
+$adminChatId = getenv('ADMIN_CHAT_ID');
+define('ADMIN_CHAT_ID', ($adminChatId !== false && $adminChatId !== '') ? trim($adminChatId) : null);
 
 if (!is_dir(DATA_DIR)) {
     mkdir(DATA_DIR, 0755, true);
