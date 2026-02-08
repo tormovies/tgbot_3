@@ -72,6 +72,15 @@ function sendPhoto(int $chatId, string $fileId, ?string $caption = null): void
     apiRequest('sendPhoto', $params);
 }
 
+function answerCallbackQuery(string $callbackQueryId, ?string $text = null): void
+{
+    $params = ['callback_query_id' => $callbackQueryId];
+    if ($text !== null && $text !== '') {
+        $params['text'] = $text;
+    }
+    apiRequest('answerCallbackQuery', $params);
+}
+
 // --- Состояние (файл на пользователя) ---
 
 function getState(int $userId): array
@@ -179,6 +188,14 @@ function descriptionStepKeyboard(): array
     return [
         'keyboard' => [[['text' => 'Отправить']]],
         'resize_keyboard' => true,
+    ];
+}
+
+/** Inline-кнопка под сообщением — не исчезает при фокусе на поле ввода */
+function orderSubmitInlineButton(): array
+{
+    return [
+        'inline_keyboard' => [[['text' => 'Отправить заявку', 'callback_data' => 'order_submit']]],
     ];
 }
 
@@ -299,9 +316,9 @@ function handleOrderType(int $chatId, int $userId, string $text): void
 
     $descMsg = "Опишите задачу текстом и/или прикрепите файлы (скриншот, ТЗ в PDF и т.п.).\n\n"
         . "⚠️ Максимальный размер одного файла — 20 МБ.\n\n"
-        . "Когда всё готово — нажмите «Отправить».\n\n"
+        . "Когда всё готово — нажмите кнопку *«Отправить заявку»* под этим сообщением (она не пропадёт при вводе текста).\n\n"
         . "Если файл не загружается или нужна помощь — напишите напрямую: " . ADMIN_CONTACT;
-    sendMessage($chatId, $descMsg, descriptionStepKeyboard());
+    sendMessage($chatId, $descMsg, orderSubmitInlineButton(), 'Markdown');
 }
 
 function handleOrderDescriptionText(int $chatId, int $userId, string $text): void
@@ -310,7 +327,7 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    sendMessage($chatId, 'Принято. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Принято. Когда готово — нажмите «Отправить заявку» под сообщением выше.', orderSubmitInlineButton());
 }
 
 function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
@@ -394,7 +411,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
         sendMessage(
             $chatId,
             "⚠️ Файл «{$fileName}» слишком большой (лимит 20 МБ). Сожмите файл или отправьте ссылку. Если не получается — напишите напрямую: " . ADMIN_CONTACT,
-            descriptionStepKeyboard()
+            orderSubmitInlineButton()
         );
         return;
     }
@@ -403,7 +420,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
     setState($userId, $state);
-    sendMessage($chatId, 'Файл принят. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Файл принят. Когда готово — нажмите «Отправить заявку» под сообщением.', orderSubmitInlineButton());
 }
 
 function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
@@ -415,7 +432,7 @@ function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
     setState($userId, $state);
-    sendMessage($chatId, 'Фото принято. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
+    sendMessage($chatId, 'Фото принято. Когда готово — нажмите «Отправить заявку» под сообщением.', orderSubmitInlineButton());
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
@@ -561,6 +578,25 @@ function run(): void
         }
         foreach ($updates as $update) {
             $offset = $update['update_id'] + 1;
+
+            // Inline-кнопка «Отправить заявку» (не исчезает при вводе текста)
+            $callback = $update['callback_query'] ?? null;
+            if ($callback !== null) {
+                $cqId = $callback['id'] ?? '';
+                $chatId = (int) ($callback['message']['chat']['id'] ?? 0);
+                $userId = (int) ($callback['from']['id'] ?? 0);
+                $username = $callback['from']['username'] ?? null;
+                $data = $callback['data'] ?? '';
+                if ($data === 'order_submit') {
+                    $state = getState($userId);
+                    if (($state['step'] ?? '') === STATE_ORDER_DESCRIPTION) {
+                        handleOrderDescriptionDone($chatId, $userId, $username);
+                    }
+                }
+                answerCallbackQuery($cqId);
+                continue;
+            }
+
             $message = $update['message'] ?? null;
             if (!$message) {
                 continue;
@@ -639,7 +675,13 @@ function run(): void
                 } elseif (!empty($message['photo']) && is_array($message['photo'])) {
                     handleOrderDescriptionPhoto($chatId, $userId, $message['photo']);
                 } elseif ($text !== '') {
-                    if (preg_match('/^(?:отправить|отправить заявку|дальше\s*→?)$/ui', trim($text))) {
+                    $t = preg_replace('/[\s\r\n]+/u', ' ', trim($text));
+                    $t = mb_strtolower($t);
+                    $t = preg_replace('/[^\p{L}\p{M}\s]/u', '', $t);
+                    $t = trim($t);
+                    $isSendButton = ($t === 'отправить' || $t === 'отправитьзаявку' || $t === 'отправить заявку'
+                        || $t === 'дальше');
+                    if ($isSendButton) {
                         handleOrderDescriptionDone($chatId, $userId, $username);
                     } else {
                         handleOrderDescriptionText($chatId, $userId, $text);
