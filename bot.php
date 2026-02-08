@@ -38,7 +38,8 @@ function sendMessage(
     int $chatId,
     string $text,
     ?array $replyMarkup = null,
-    ?string $parseMode = null
+    ?string $parseMode = null,
+    bool $disableLinkPreview = false
 ): void {
     $params = ['chat_id' => $chatId, 'text' => $text];
     if ($replyMarkup !== null) {
@@ -46,6 +47,9 @@ function sendMessage(
     }
     if ($parseMode !== null) {
         $params['parse_mode'] = $parseMode;
+    }
+    if ($disableLinkPreview) {
+        $params['disable_web_page_preview'] = true;
     }
     apiRequest('sendMessage', $params);
 }
@@ -192,7 +196,7 @@ function handleCatalog(int $chatId): void
         . "*MarketView* (1500 руб.)\n"
         . "[MT4](https://einvestor.ru/products/informacionnaya-panel-marketview)\n"
         . "Информационная панель: выбранные символы, цены, изменение за день или период.";
-    sendMessage($chatId, $text, null, 'Markdown');
+    sendMessage($chatId, $text, null, 'Markdown', true);
 }
 
 function handlePrices(int $chatId): void
@@ -273,7 +277,7 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    sendMessage($chatId, 'Текст принят. Добавьте ещё описание или файлы и нажмите «Отправить заявку».', descriptionStepKeyboard());
+    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
@@ -323,7 +327,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
     setState($userId, $state);
-    sendMessage($chatId, 'Файл принят. Добавьте ещё или нажмите «Отправить заявку».', descriptionStepKeyboard());
+    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
@@ -335,7 +339,7 @@ function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
     setState($userId, $state);
-    sendMessage($chatId, 'Фото принято. Добавьте ещё или нажмите «Отправить заявку».', descriptionStepKeyboard());
+    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
