@@ -101,7 +101,11 @@ function clearState(int $userId): void
 
 function saveOrderToFile(array $orderData): void
 {
-    $path = DATA_DIR . '/orders.json';
+    $dir = DATA_DIR;
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    $path = $dir . '/orders.json';
     $orders = [];
     if (is_file($path)) {
         $json = @file_get_contents($path);
@@ -122,7 +126,10 @@ function saveOrderToFile(array $orderData): void
     $orderData['id'] = $id;
     $orderData['date'] = date('Y-m-d H:i:s');
     $orders[] = $orderData;
-    file_put_contents($path, json_encode($orders, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    $written = @file_put_contents($path, json_encode($orders, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+    if ($written === false) {
+        error_log('Order save failed: cannot write to ' . $path);
+    }
 }
 
 // --- Клавиатуры ---
@@ -170,7 +177,7 @@ function confirmKeyboard(): array
 function descriptionStepKeyboard(): array
 {
     return [
-        'keyboard' => [[['text' => 'Отправить заявку']]],
+        'keyboard' => [[['text' => 'Отправить']]],
         'resize_keyboard' => true,
     ];
 }
@@ -292,7 +299,7 @@ function handleOrderType(int $chatId, int $userId, string $text): void
 
     $descMsg = "Опишите задачу текстом и/или прикрепите файлы (скриншот, ТЗ в PDF и т.п.).\n\n"
         . "⚠️ Максимальный размер одного файла — 20 МБ.\n\n"
-        . "Когда всё готово — нажмите «Отправить заявку».\n\n"
+        . "Когда всё готово — нажмите «Отправить».\n\n"
         . "Если файл не загружается или нужна помощь — напишите напрямую: " . ADMIN_CONTACT;
     sendMessage($chatId, $descMsg, descriptionStepKeyboard());
 }
@@ -303,35 +310,78 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    // Кнопка «Отправить заявку» уже на экране
+    sendMessage($chatId, 'Принято. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
 }
 
 function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
 {
     $state = getState($userId);
-    $state['step'] = STATE_ORDER_CONFIRM;
-    $state['order_contact'] = ($username !== null && $username !== '')
-        ? 'Telegram: @' . $username
-        : 'Telegram ID: ' . $userId;
-    setState($userId, $state);
-
     $platform = $state['order_platform'] ?? '';
     $type = $state['order_type'] ?? '';
-    $desc = $state['order_description'] ?? '(нет текста)';
-    $contact = $state['order_contact'] ?? '';
-    $files = $state['order_files'] ?? [];
-    $fileCount = count($files);
+    $desc = $state['order_description'] ?? '';
+    $contact = ($username !== null && $username !== '')
+        ? 'Telegram: @' . $username
+        : 'Telegram ID: ' . $userId;
+    $fileCount = count($state['order_files'] ?? []);
 
-    $summary = "**Проверьте заявку:**\n\n"
-        . "Платформа: {$platform}\n"
-        . "Тип: {$type}\n"
-        . "Описание: {$desc}\n";
-    if ($fileCount > 0) {
-        $summary .= "Приложено файлов: {$fileCount}\n";
+    if ($platform === '' || $type === '') {
+        sendMessage($chatId, 'Что-то пошло не так. Начните заказ заново: нажмите «Заказать».', mainMenuKeyboard());
+        clearState($userId);
+        return;
     }
-    $summary .= "Контакт: {$contact}\n\n"
-        . "Всё верно? Отправить заявку?";
-    sendMessage($chatId, $summary, confirmKeyboard(), 'Markdown');
+
+    // Сразу отправляем заявку — одна кнопка «Отправить», без шага подтверждения
+    sendMessage(
+        $chatId,
+        '✅ Заявка отправлена. Мы свяжемся с вами для уточнения деталей и расчёта.',
+        mainMenuKeyboard()
+    );
+
+    error_log(sprintf(
+        "Order: platform=%s type=%s user_id=%s username=%s contact=%s files=%d desc=%s",
+        $platform,
+        $type,
+        $userId,
+        $username ?? '',
+        $contact,
+        $fileCount,
+        mb_substr($desc, 0, 100)
+    ));
+
+    if (defined('ADMIN_CHAT_ID') && ADMIN_CHAT_ID !== null && ADMIN_CHAT_ID !== '') {
+        $adminChatId = (int) ADMIN_CHAT_ID;
+        $adminMsg = "🆕 *Новая заявка*\n\n"
+            . "Платформа: {$platform}\n"
+            . "Тип: {$type}\n"
+            . "Описание: {$desc}\n"
+            . "Контакт: {$contact}\n"
+            . "Файлов: {$fileCount}\n"
+            . "User ID: {$userId}" . ($username !== null && $username !== '' ? " (@{$username})" : '');
+        sendMessage($adminChatId, $adminMsg, null, 'Markdown');
+        foreach ($state['order_files'] ?? [] as $file) {
+            $fileId = $file['file_id'] ?? '';
+            if ($fileId === '') continue;
+            $name = $file['name'] ?? null;
+            $caption = $name !== null ? $name : null;
+            if (($file['type'] ?? '') === 'photo') {
+                sendPhoto($adminChatId, $fileId, $caption);
+            } else {
+                sendDocument($adminChatId, $fileId, $caption);
+            }
+        }
+    }
+
+    saveOrderToFile([
+        'platform' => $platform,
+        'type' => $type,
+        'description' => $desc,
+        'contact' => $contact,
+        'file_count' => $fileCount,
+        'user_id' => $userId,
+        'username' => $username ?? '',
+    ]);
+
+    clearState($userId);
 }
 
 function handleOrderDescriptionDocument(int $chatId, int $userId, array $document): void
@@ -353,7 +403,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
     setState($userId, $state);
-    // Кнопка «Отправить заявку» уже на экране
+    sendMessage($chatId, 'Файл принят. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
 }
 
 function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
@@ -365,7 +415,7 @@ function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
     setState($userId, $state);
-    // Кнопка «Отправить заявку» уже на экране
+    sendMessage($chatId, 'Фото принято. Когда готово — нажмите «Отправить».', descriptionStepKeyboard());
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
@@ -589,7 +639,7 @@ function run(): void
                 } elseif (!empty($message['photo']) && is_array($message['photo'])) {
                     handleOrderDescriptionPhoto($chatId, $userId, $message['photo']);
                 } elseif ($text !== '') {
-                    if (preg_match('/^(?:отправить заявку|дальше\s*→?)$/ui', trim($text))) {
+                    if (preg_match('/^(?:отправить|отправить заявку|дальше\s*→?)$/ui', trim($text))) {
                         handleOrderDescriptionDone($chatId, $userId, $username);
                     } else {
                         handleOrderDescriptionText($chatId, $userId, $text);
