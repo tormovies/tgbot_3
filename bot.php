@@ -10,6 +10,7 @@ const STATE_ORDER_TYPE = 'order_type';
 const STATE_ORDER_DESCRIPTION = 'order_description';
 const STATE_ORDER_CONTACT = 'order_contact';
 const STATE_ORDER_CONFIRM = 'order_confirm';
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 МБ — лимит Telegram
 
 // --- API ---
 
@@ -118,6 +119,14 @@ function confirmKeyboard(): array
     ];
 }
 
+function descriptionStepKeyboard(): array
+{
+    return [
+        'keyboard' => [[['text' => 'Дальше →']]],
+        'resize_keyboard' => true,
+    ];
+}
+
 // --- Обработчики команд ---
 // Что выводится и что делает каждая команда — задаётся в соответствующей функции ниже.
 //
@@ -144,17 +153,39 @@ function handleStart(int $chatId): void
 
 function handleCatalog(int $chatId): void
 {
-    $text = "📋 **Каталог (MT4/MT5)**\n\n"
-        . "Здесь будет список готовых индикаторов и советников.\n"
-        . "Пока каталог заполняется — напишите, что ищете, через кнопку «Заказать».";
+    $text = "📋 *Каталог (MT4/MT5)*\n\n"
+        . "*RSI Alerts* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/indikator-rsi-s-alertom) · [MT5](https://einvestor.ru/products/rsi-alerts-mt5)\n"
+        . "Индикатор RSI со звуковыми, push и email уведомлениями при пересечении уровней.\n\n"
+        . "*CCI Alerts* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/cci-alerts-dlya-mt4) · [MT5](https://einvestor.ru/products/cci-alerts-dlya-mt5)\n"
+        . "Индикатор CCI со звуковыми, push и email уведомлениями при пересечении уровней.\n\n"
+        . "*MFI Alerts* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/mfi-alerts-dlya-mt4) · [MT5](https://einvestor.ru/products/mfi-s-alertami-dlya-mt5)\n"
+        . "Индикатор MFI со звуковыми, push и email уведомлениями при пересечении уровней.\n\n"
+        . "*Demarker Alerts* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/demarker-s-alertami-dlya-mt4) · [MT5](https://einvestor.ru/products/demarker-alerts-mt5)\n"
+        . "Индикатор Demarker со звуковыми, push и email уведомлениями при пересечении уровней.\n\n"
+        . "*Fibo Alerts* (5000 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/fibo-alerts) · [MT5](https://einvestor.ru/products/fibonachchi-so-zvukovym-signalom-mt5)\n"
+        . "Horizontal Channel Alert with Custom Fibo — канальный индикатор с Фибо и алертами, push и email уведомлениями.\n\n"
+        . "*RSI MTF панель* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/panel-rsi-mtf-dlya-mt4)\n"
+        . "Панель RSI: информация с нескольких таймфреймов и символов в одном месте, с уведомлениями и алертами.\n\n"
+        . "*MarketView* (1500 руб.)\n"
+        . "[MT4](https://einvestor.ru/products/informacionnaya-panel-marketview)\n"
+        . "Информационная панель: выбранные символы, цены, изменение за день или период.";
     sendMessage($chatId, $text, null, 'Markdown');
 }
 
 function handlePrices(int $chatId): void
 {
     $text = "💰 **Цены и условия**\n\n"
-        . "• Готовые продукты — цена указана в каталоге.\n"
-        . "• Разработка под заказ (MQL4/MQL5) — стоимость и сроки после описания задачи.\n\n"
+        . "• На готовые продукты — цена указана в каталоге.\n"
+        . "• Разработка под заказ (MQL4/MQL5):\n"
+        . "  — стоимость создания индикатора от 5000 руб.;\n"
+        . "  — стоимость создания советника от 10000 руб.\n"
+        . "  Стоимость может варьироваться в зависимости от сложности.\n\n"
         . "Оформите заявку через кнопку «Заказать» — ответим с расчётом.";
     sendMessage($chatId, $text, null, 'Markdown');
 }
@@ -208,21 +239,66 @@ function handleOrderType(int $chatId, int $userId, string $text): void
     $state = getState($userId);
     $state['step'] = STATE_ORDER_DESCRIPTION;
     $state['order_type'] = $type;
+    $state['order_description'] = '';
+    $state['order_files'] = [];
     setState($userId, $state);
-    sendMessage(
-        $chatId,
-        'Опишите задачу: что должно делать, на каком таймфрейме, какие условия. Чем подробнее — тем точнее расчёт.',
-        removeKeyboard()
-    );
+
+    $descMsg = "Опишите задачу текстом и/или прикрепите файлы (скриншот, ТЗ в PDF и т.п.).\n\n"
+        . "⚠️ Максимальный размер одного файла — 20 МБ.\n\n"
+        . "Когда закончите — нажмите кнопку «Дальше →».\n\n"
+        . "Если файл не загружается или нужна помощь — напишите напрямую: " . ADMIN_CONTACT;
+    sendMessage($chatId, $descMsg, descriptionStepKeyboard());
 }
 
-function handleOrderDescription(int $chatId, int $userId, string $text): void
+function handleOrderDescriptionText(int $chatId, int $userId, string $text): void
+{
+    $state = getState($userId);
+    $prev = $state['order_description'] ?? '';
+    $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
+    setState($userId, $state);
+    sendMessage($chatId, 'Текст принят. Добавьте ещё описание или файлы и нажмите «Дальше →».', descriptionStepKeyboard());
+}
+
+function handleOrderDescriptionDone(int $chatId, int $userId): void
 {
     $state = getState($userId);
     $state['step'] = STATE_ORDER_CONTACT;
-    $state['order_description'] = trim($text);
     setState($userId, $state);
-    sendMessage($chatId, 'Как с вами связаться? (Telegram уже есть; можно дописать email или телефон.)');
+    sendMessage($chatId, 'Как с вами связаться? (Telegram уже есть; можно дописать email или телефон.)', removeKeyboard());
+}
+
+function handleOrderDescriptionDocument(int $chatId, int $userId, array $document): void
+{
+    $fileId = $document['file_id'] ?? '';
+    $fileSize = (int) ($document['file_size'] ?? 0);
+    $fileName = $document['file_name'] ?? 'файл';
+
+    if ($fileSize > MAX_FILE_SIZE_BYTES) {
+        sendMessage(
+            $chatId,
+            "⚠️ Файл «{$fileName}» слишком большой (лимит 20 МБ). Сожмите файл или отправьте ссылку. Если не получается — напишите напрямую: " . ADMIN_CONTACT,
+            descriptionStepKeyboard()
+        );
+        return;
+    }
+
+    $state = getState($userId);
+    $state['order_files'] = $state['order_files'] ?? [];
+    $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
+    setState($userId, $state);
+    sendMessage($chatId, 'Файл принят. Добавьте ещё или нажмите «Дальше →».', descriptionStepKeyboard());
+}
+
+function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
+{
+    $largest = end($photoSizes);
+    $fileId = $largest['file_id'] ?? '';
+
+    $state = getState($userId);
+    $state['order_files'] = $state['order_files'] ?? [];
+    $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
+    setState($userId, $state);
+    sendMessage($chatId, 'Фото принято. Добавьте ещё или нажмите «Дальше →».', descriptionStepKeyboard());
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
@@ -234,14 +310,19 @@ function handleOrderContact(int $chatId, int $userId, string $text): void
 
     $platform = $state['order_platform'] ?? '';
     $type = $state['order_type'] ?? '';
-    $desc = $state['order_description'] ?? '';
+    $desc = $state['order_description'] ?? '(нет текста)';
     $contact = $state['order_contact'] ?? '';
+    $files = $state['order_files'] ?? [];
+    $fileCount = count($files);
 
     $summary = "**Проверьте заявку:**\n\n"
         . "Платформа: {$platform}\n"
         . "Тип: {$type}\n"
-        . "Описание: {$desc}\n"
-        . "Контакт: {$contact}\n\n"
+        . "Описание: {$desc}\n";
+    if ($fileCount > 0) {
+        $summary .= "Приложено файлов: {$fileCount}\n";
+    }
+    $summary .= "Контакт: {$contact}\n\n"
         . "Всё верно? Отправить заявку?";
     sendMessage($chatId, $summary, confirmKeyboard(), 'Markdown');
 }
@@ -267,13 +348,15 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
             mainMenuKeyboard()
         );
 
+        $fileCount = count($state['order_files'] ?? []);
         error_log(sprintf(
-            "Order: platform=%s type=%s user_id=%s username=%s contact=%s desc=%s",
+            "Order: platform=%s type=%s user_id=%s username=%s contact=%s files=%d desc=%s",
             $platform,
             $type,
             $userId,
             $username ?? '',
             $contact,
+            $fileCount,
             mb_substr($desc, 0, 100)
         ));
 
@@ -386,7 +469,17 @@ function run(): void
                 continue;
             }
             if ($step === STATE_ORDER_DESCRIPTION) {
-                handleOrderDescription($chatId, $userId, $text);
+                if (isset($message['document'])) {
+                    handleOrderDescriptionDocument($chatId, $userId, $message['document']);
+                } elseif (!empty($message['photo']) && is_array($message['photo'])) {
+                    handleOrderDescriptionPhoto($chatId, $userId, $message['photo']);
+                } elseif ($text !== '') {
+                    if (preg_match('/^дальше\s*→?$/ui', trim($text))) {
+                        handleOrderDescriptionDone($chatId, $userId);
+                    } else {
+                        handleOrderDescriptionText($chatId, $userId, $text);
+                    }
+                }
                 continue;
             }
             if ($step === STATE_ORDER_CONTACT) {

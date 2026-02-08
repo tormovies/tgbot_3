@@ -22,6 +22,8 @@ if (!$token) {
 
 define('BOT_TOKEN', $token);
 define('DATA_DIR', __DIR__ . '/data');
+// Прямой контакт, если не получается отправить файл или есть вопросы (укажи в .env или здесь)
+define('ADMIN_CONTACT', getenv('ADMIN_CONTACT') ?: 'Telegram: @username');
 
 if (!is_dir(DATA_DIR)) {
     mkdir(DATA_DIR, 0755, true);
