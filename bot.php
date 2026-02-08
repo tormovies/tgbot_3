@@ -30,8 +30,17 @@ function apiRequest(string $method, array $params = []): ?array
         return null;
     }
     $data = json_decode($result, true);
+    if (($data['ok'] ?? false) !== true && !empty($data['description'])) {
+        error_log('Telegram API error: ' . $data['description']);
+    }
     $result = $data['result'] ?? null;
     return is_array($result) ? $result : null;
+}
+
+/** Экранирование для Markdown (Telegram), чтобы текст пользователя не ломал разбор. */
+function escapeMarkdown(string $s): string
+{
+    return str_replace(['_', '*', '`', '['], ['\_', '\*', '\`', '\['], $s);
 }
 
 function sendMessage(
@@ -355,10 +364,10 @@ function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username)
     if (defined('ADMIN_CHAT_ID') && ADMIN_CHAT_ID !== null && ADMIN_CHAT_ID !== '') {
         $adminChatId = (int) ADMIN_CHAT_ID;
         $adminMsg = "🆕 *Новая заявка*\n\n"
-            . "Платформа: {$platform}\n"
-            . "Тип: {$type}\n"
-            . "Описание: {$desc}\n"
-            . "Контакт: {$contact}\n"
+            . "Платформа: " . escapeMarkdown($platform) . "\n"
+            . "Тип: " . escapeMarkdown($type) . "\n"
+            . "Описание: " . escapeMarkdown($desc) . "\n"
+            . "Контакт: " . escapeMarkdown($contact) . "\n"
             . "Файлов: {$fileCount}\n";
         sendMessage($adminChatId, $adminMsg, null, 'Markdown');
         foreach ($state['order_files'] ?? [] as $file) {
@@ -372,6 +381,8 @@ function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username)
                 sendDocument($adminChatId, $fileId, $caption);
             }
         }
+    } else {
+        error_log('Order: admin notification skipped — in .env set ADMIN_CHAT_ID (your Telegram chat_id)');
     }
 
     saveOrderToFile([
@@ -494,13 +505,12 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
         if (defined('ADMIN_CHAT_ID') && ADMIN_CHAT_ID !== null && ADMIN_CHAT_ID !== '') {
             $adminChatId = (int) ADMIN_CHAT_ID;
             $adminMsg = "🆕 *Новая заявка*\n\n"
-                . "Платформа: {$platform}\n"
-                . "Тип: {$type}\n"
-                . "Описание: {$desc}\n"
-                . "Контакт: {$contact}\n"
+                . "Платформа: " . escapeMarkdown($platform) . "\n"
+                . "Тип: " . escapeMarkdown($type) . "\n"
+                . "Описание: " . escapeMarkdown($desc) . "\n"
+                . "Контакт: " . escapeMarkdown($contact) . "\n"
                 . "Файлов: {$fileCount}\n";
             sendMessage($adminChatId, $adminMsg, null, 'Markdown');
-
             foreach ($state['order_files'] ?? [] as $file) {
                 $fileId = $file['file_id'] ?? '';
                 if ($fileId === '') {
@@ -514,6 +524,8 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
                     sendDocument($adminChatId, $fileId, $caption);
                 }
             }
+        } else {
+            error_log('Order: admin notification skipped — in .env set ADMIN_CHAT_ID (your Telegram chat_id)');
         }
 
     saveOrderToFile([
