@@ -99,6 +99,32 @@ function clearState(int $userId): void
     }
 }
 
+function saveOrderToFile(array $orderData): void
+{
+    $path = DATA_DIR . '/orders.json';
+    $orders = [];
+    if (is_file($path)) {
+        $json = @file_get_contents($path);
+        if ($json !== false) {
+            $decoded = json_decode($json, true);
+            if (is_array($decoded)) {
+                $orders = $decoded;
+            }
+        }
+    }
+    $id = 1;
+    foreach ($orders as $o) {
+        $existingId = (int) ($o['id'] ?? 0);
+        if ($existingId >= $id) {
+            $id = $existingId + 1;
+        }
+    }
+    $orderData['id'] = $id;
+    $orderData['date'] = date('Y-m-d H:i:s');
+    $orders[] = $orderData;
+    file_put_contents($path, json_encode($orders, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), LOCK_EX);
+}
+
 // --- Клавиатуры ---
 
 function mainMenuKeyboard(): array
@@ -277,7 +303,7 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
+    // Кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
@@ -327,7 +353,7 @@ function handleOrderDescriptionDocument(int $chatId, int $userId, array $documen
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'document', 'file_id' => $fileId, 'name' => $fileName];
     setState($userId, $state);
-    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
+    // Кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes): void
@@ -339,7 +365,7 @@ function handleOrderDescriptionPhoto(int $chatId, int $userId, array $photoSizes
     $state['order_files'] = $state['order_files'] ?? [];
     $state['order_files'][] = ['type' => 'photo', 'file_id' => $fileId];
     setState($userId, $state);
-    // Без лишнего сообщения — кнопка «Отправить заявку» уже на экране
+    // Кнопка «Отправить заявку» уже на экране
 }
 
 function handleOrderContact(int $chatId, int $userId, string $text): void
@@ -371,26 +397,36 @@ function handleOrderContact(int $chatId, int $userId, string $text): void
 function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $username): void
 {
     $raw = mb_strtolower(trim($text));
+    // Только явная отмена
     if (mb_strpos($raw, 'отмен') !== false || $raw === 'отмена') {
         clearState($userId);
         sendMessage($chatId, 'Заявка отменена.', mainMenuKeyboard());
         return;
     }
-    if (mb_strpos($raw, 'да') !== false || mb_strpos($raw, 'отправить') !== false) {
-        $state = getState($userId);
-        $platform = $state['order_platform'] ?? '';
-        $type = $state['order_type'] ?? '';
-        $desc = $state['order_description'] ?? '';
-        $contact = $state['order_contact'] ?? '';
 
-        sendMessage(
-            $chatId,
-            '✅ Заявка отправлена. Мы свяжемся с вами для уточнения деталей и расчёта.',
-            mainMenuKeyboard()
-        );
+    // Любое другое сообщение в этом шаге = подтверждение (кнопка «Да, отправить» или повторное нажатие)
+    $state = getState($userId);
+    $platform = $state['order_platform'] ?? '';
+    $type = $state['order_type'] ?? '';
+    $desc = $state['order_description'] ?? '';
+    $contact = $state['order_contact'] ?? '';
 
-        $fileCount = count($state['order_files'] ?? []);
-        error_log(sprintf(
+    // Если состояния уже нет (например заявка только что отправилась) — просто подсказка
+    if ($platform === '' && $type === '') {
+        clearState($userId);
+        sendMessage($chatId, 'Заявка уже отправлена. Если нужен новый заказ — нажмите «Заказать» или /order.', mainMenuKeyboard());
+        return;
+    }
+
+    // Сразу сообщаем пользователю — чтобы точно пришло
+    sendMessage(
+        $chatId,
+        '✅ Заявка отправлена. Мы свяжемся с вами для уточнения деталей и расчёта.',
+        mainMenuKeyboard()
+    );
+
+    $fileCount = count($state['order_files'] ?? []);
+    error_log(sprintf(
             "Order: platform=%s type=%s user_id=%s username=%s contact=%s files=%d desc=%s",
             $platform,
             $type,
@@ -428,10 +464,17 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
             }
         }
 
-        clearState($userId);
-        return;
-    }
-    sendMessage($chatId, 'Нажмите «Да, отправить» или «Отмена».', confirmKeyboard());
+    saveOrderToFile([
+        'platform' => $platform,
+        'type' => $type,
+        'description' => $desc,
+        'contact' => $contact,
+        'file_count' => $fileCount,
+        'user_id' => $userId,
+        'username' => $username ?? '',
+    ]);
+
+    clearState($userId);
 }
 
 function handleOrderCancel(int $chatId, int $userId): void

@@ -1,0 +1,5 @@
+# Запрет доступа к папке data/ (заказы и состояния)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^data/ - [F,L]
+</IfModule>
