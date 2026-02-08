@@ -29,7 +29,8 @@ function apiRequest(string $method, array $params = []): ?array
         return null;
     }
     $data = json_decode($result, true);
-    return $data['result'] ?? null;
+    $result = $data['result'] ?? null;
+    return is_array($result) ? $result : null;
 }
 
 function sendMessage(
