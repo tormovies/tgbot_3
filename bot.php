@@ -205,7 +205,6 @@ function orderSubmitInlineButton(): array
 // /start   → handleStart()      — приветствие и кнопки меню
 // /catalog → handleCatalog()    — текст каталога (или кнопка «Каталог»)
 // /prices  → handlePrices()     — текст про цены
-// /help    → handleHelp()       — подсказка по командам
 // /order   → handleOrderStart() — начало заказа (или кнопка «Заказать»)
 // /cancel  → handleOrderCancel()— выход из сценария заказа
 //
@@ -258,18 +257,6 @@ function handlePrices(int $chatId): void
         . "  — стоимость создания советника от 10000 руб.\n"
         . "  Стоимость может варьироваться в зависимости от сложности.\n\n"
         . "Оформите заявку через кнопку «Заказать» — ответим с расчётом.";
-    sendMessage($chatId, $text, null, 'Markdown');
-}
-
-function handleHelp(int $chatId): void
-{
-    $text = "**Что умеет бот:**\n\n"
-        . "/start — главное меню\n"
-        . "/catalog — каталог индикаторов и советников MT4/MT5\n"
-        . "/prices — цены и условия\n"
-        . "/order — оформить заказ своего индикатора или советника\n"
-        . "/help — эта подсказка\n\n"
-        . "Можно пользоваться кнопками под сообщениями вместо команд.";
     sendMessage($chatId, $text, null, 'Markdown');
 }
 
@@ -327,7 +314,7 @@ function handleOrderDescriptionText(int $chatId, int $userId, string $text): voi
     $prev = $state['order_description'] ?? '';
     $state['order_description'] = trim($prev ? $prev . "\n\n" . trim($text) : trim($text));
     setState($userId, $state);
-    sendMessage($chatId, 'Принято. Когда готово — нажмите «Отправить заявку» под сообщением выше.', orderSubmitInlineButton());
+    sendMessage($chatId, 'Принято. Когда готово — нажмите «Отправить заявку».', orderSubmitInlineButton());
 }
 
 function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username): void
@@ -372,8 +359,7 @@ function handleOrderDescriptionDone(int $chatId, int $userId, ?string $username)
             . "Тип: {$type}\n"
             . "Описание: {$desc}\n"
             . "Контакт: {$contact}\n"
-            . "Файлов: {$fileCount}\n"
-            . "User ID: {$userId}" . ($username !== null && $username !== '' ? " (@{$username})" : '');
+            . "Файлов: {$fileCount}\n";
         sendMessage($adminChatId, $adminMsg, null, 'Markdown');
         foreach ($state['order_files'] ?? [] as $file) {
             $fileId = $file['file_id'] ?? '';
@@ -512,8 +498,7 @@ function handleOrderConfirm(int $chatId, int $userId, string $text, ?string $use
                 . "Тип: {$type}\n"
                 . "Описание: {$desc}\n"
                 . "Контакт: {$contact}\n"
-                . "Файлов: {$fileCount}\n"
-                . "User ID: {$userId}" . ($username !== null && $username !== '' ? " (@{$username})" : '');
+                . "Файлов: {$fileCount}\n";
             sendMessage($adminChatId, $adminMsg, null, 'Markdown');
 
             foreach ($state['order_files'] ?? [] as $file) {
@@ -559,7 +544,6 @@ function setMyCommands(): void
         ['command' => 'catalog', 'description' => 'Каталог готовых индикаторов и советников (MT4/MT5)'],
         ['command' => 'prices', 'description' => 'Условия и цены: готовые продукты и разработка под заказ'],
         ['command' => 'order', 'description' => 'Оформить заказ своего индикатора/советника'],
-        ['command' => 'help', 'description' => 'Краткая подсказка по боту'],
     ];
     apiRequest('setMyCommands', ['commands' => $commands]);
 }
@@ -625,10 +609,6 @@ function run(): void
             }
             if ($cmd === 'prices') {
                 handlePrices($chatId);
-                continue;
-            }
-            if ($cmd === 'help') {
-                handleHelp($chatId);
                 continue;
             }
             if ($cmd === 'order') {
