@@ -17,19 +17,28 @@ const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 МБ — лимит Telegram
 function apiRequest(string $method, array $params = []): ?array
 {
     $url = API_BASE . $method;
+    // getUpdates ждёт до timeout (30 с) — без явного таймаута PHP обрывает раньше (default_socket_timeout), апдейты не приходят
+    $timeout = ($method === 'getUpdates') ? 45.0 : 30.0;
     $options = [
         'http' => [
             'method'  => 'POST',
             'header'  => 'Content-Type: application/json',
             'content' => json_encode($params),
+            'timeout' => $timeout,
         ],
     ];
     $context = stream_context_create($options);
     $result = @file_get_contents($url, false, $context);
     if ($result === false) {
+        $err = error_get_last();
+        error_log('Telegram HTTP failed: ' . $method . ' — ' . ($err['message'] ?? 'file_get_contents'));
         return null;
     }
     $data = json_decode($result, true);
+    if (!is_array($data)) {
+        error_log('Telegram JSON decode failed: ' . $method);
+        return null;
+    }
     if (($data['ok'] ?? false) !== true && !empty($data['description'])) {
         error_log('Telegram API error: ' . $data['description']);
     }
@@ -564,6 +573,8 @@ function setMyCommands(): void
 
 function run(): void
 {
+    // Иначе при установленном webhook getUpdates не получает сообщения
+    apiRequest('deleteWebhook', ['drop_pending_updates' => false]);
     setMyCommands();
 
     $offset = 0;
