@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/config.php';
 
+// В CLI error_log() по умолчанию уходит в syslog, а не в файл nohup — пишем в bot.log рядом со скриптом
+ini_set('log_errors', '1');
+ini_set('error_log', __DIR__ . '/bot.log');
+
 const API_BASE = 'https://api.telegram.org/bot' . BOT_TOKEN . '/';
 const STATE_ORDER_PLATFORM = 'order_platform';
 const STATE_ORDER_TYPE = 'order_type';
@@ -600,7 +604,8 @@ function run(): void
     // Иначе при установленном webhook getUpdates не получает сообщения
     apiRequest('deleteWebhook', ['drop_pending_updates' => false]);
     setMyCommands();
-    error_log('Bot: polling started, curl=' . (function_exists('curl_init') ? 'yes' : 'no'));
+    $curlOn = function_exists('curl_init') ? 'yes' : 'no';
+    fwrite(STDERR, date('c') . " Bot: polling started, curl={$curlOn}\n");
 
     $offset = 0;
     while (true) {
