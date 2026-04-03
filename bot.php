@@ -17,24 +17,48 @@ const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 МБ — лимит Telegram
 function apiRequest(string $method, array $params = []): ?array
 {
     $url = API_BASE . $method;
-    // getUpdates ждёт до timeout (30 с) — без явного таймаута PHP обрывает раньше (default_socket_timeout), апдейты не приходят
-    $timeout = ($method === 'getUpdates') ? 45.0 : 30.0;
-    $options = [
-        'http' => [
-            'method'  => 'POST',
-            'header'  => 'Content-Type: application/json',
-            'content' => json_encode($params),
-            'timeout' => $timeout,
-        ],
-    ];
-    $context = stream_context_create($options);
-    $result = @file_get_contents($url, false, $context);
-    if ($result === false) {
-        $err = error_get_last();
-        error_log('Telegram HTTP failed: ' . $method . ' — ' . ($err['message'] ?? 'file_get_contents'));
-        return null;
+    $payload = json_encode($params);
+    // long poll getUpdates: Telegram держит до 30 с — таймаут запроса должен быть больше
+    $timeout = ($method === 'getUpdates') ? 55 : 60;
+
+    $raw = null;
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => 15,
+        ]);
+        $raw = curl_exec($ch);
+        $curlErr = curl_error($ch);
+        $curlNo = curl_errno($ch);
+        curl_close($ch);
+        if ($raw === false || $curlNo !== 0) {
+            error_log('Telegram cURL failed: ' . $method . ' — ' . ($curlErr !== '' ? $curlErr : 'curl_exec'));
+            return null;
+        }
+    } else {
+        $options = [
+            'http' => [
+                'method'  => 'POST',
+                'header'  => 'Content-Type: application/json',
+                'content' => $payload,
+                'timeout' => (float) $timeout,
+            ],
+        ];
+        $context = stream_context_create($options);
+        $raw = @file_get_contents($url, false, $context);
+        if ($raw === false) {
+            $err = error_get_last();
+            error_log('Telegram HTTP failed: ' . $method . ' — ' . ($err['message'] ?? 'file_get_contents'));
+            return null;
+        }
     }
-    $data = json_decode($result, true);
+
+    $data = json_decode($raw, true);
     if (!is_array($data)) {
         error_log('Telegram JSON decode failed: ' . $method);
         return null;
@@ -576,6 +600,7 @@ function run(): void
     // Иначе при установленном webhook getUpdates не получает сообщения
     apiRequest('deleteWebhook', ['drop_pending_updates' => false]);
     setMyCommands();
+    error_log('Bot: polling started, curl=' . (function_exists('curl_init') ? 'yes' : 'no'));
 
     $offset = 0;
     while (true) {
