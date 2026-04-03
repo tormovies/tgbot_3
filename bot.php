@@ -28,14 +28,18 @@ function apiRequest(string $method, array $params = []): ?array
     $raw = null;
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
+        $curlOpts = [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => $payload,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 15,
-        ]);
+            // 15 с часто не хватает при медленном DNS/маршруте; «0 bytes» = не установилось соединение
+            CURLOPT_CONNECTTIMEOUT => 30,
+            // На многих VPS сломан IPv6 — curl ждёт таймаут. Только IPv4 к api.telegram.org
+            CURLOPT_IPRESOLVE => defined('CURL_IPRESOLVE_V4') ? CURL_IPRESOLVE_V4 : 1,
+        ];
+        curl_setopt_array($ch, $curlOpts);
         $raw = curl_exec($ch);
         $curlErr = curl_error($ch);
         $curlNo = curl_errno($ch);
