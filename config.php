@@ -16,6 +16,32 @@ if (is_file($envFile)) {
     }
 }
 
+// Как shell/cron: .proxy.env не всегда подхватывается в окружение PHP — читаем сами
+$proxyEnvFile = __DIR__ . '/.proxy.env';
+if (is_file($proxyEnvFile)) {
+    $proxyLines = file($proxyEnvFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($proxyLines as $pline) {
+        $pline = trim($pline);
+        if ($pline === '' || strpos($pline, '#') === 0) {
+            continue;
+        }
+        if (preg_match('/^export\s+(\w+)=(.*)$/u', $pline, $pm)) {
+            $pname = $pm[1];
+            $pval = trim($pm[2], " \t\"'\r\n");
+        } elseif (strpos($pline, '=') !== false) {
+            [$pname, $pval] = explode('=', $pline, 2);
+            $pname = trim($pname);
+            $pval = trim($pval, " \t\"'\r\n");
+            if ($pname === '' || strpos($pname, ' ') !== false) {
+                continue;
+            }
+        } else {
+            continue;
+        }
+        putenv($pname . '=' . $pval);
+    }
+}
+
 $token = getenv('BOT_TOKEN');
 if (!$token) {
     fwrite(STDERR, "Задайте BOT_TOKEN в .env (скопируй из .env.example)\n");

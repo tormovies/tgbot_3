@@ -41,6 +41,7 @@ function apiRequest(string $method, array $params = []): ?array
         ];
         if (defined('TELEGRAM_HTTP_PROXY') && TELEGRAM_HTTP_PROXY !== '') {
             $curlOpts[CURLOPT_PROXY] = TELEGRAM_HTTP_PROXY;
+            $curlOpts[CURLOPT_HTTPPROXYTUNNEL] = true;
         }
         curl_setopt_array($ch, $curlOpts);
         $raw = curl_exec($ch);
