@@ -31,6 +31,12 @@ define('ADMIN_CONTACT', ($adminContact !== false && $adminContact !== '') ? $adm
 $adminChatId = getenv('ADMIN_CHAT_ID');
 define('ADMIN_CHAT_ID', ($adminChatId !== false && $adminChatId !== '') ? trim($adminChatId) : null);
 
+$tgProxy = getenv('TELEGRAM_HTTP_PROXY');
+if ($tgProxy === false || trim((string) $tgProxy) === '') {
+    $tgProxy = getenv('HTTPS_PROXY');
+}
+define('TELEGRAM_HTTP_PROXY', ($tgProxy !== false && trim((string) $tgProxy) !== '') ? trim((string) $tgProxy) : '');
+
 if (!is_dir(DATA_DIR)) {
     mkdir(DATA_DIR, 0755, true);
 }

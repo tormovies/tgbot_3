@@ -39,6 +39,9 @@ function apiRequest(string $method, array $params = []): ?array
             // На многих VPS сломан IPv6 — curl ждёт таймаут. Только IPv4 к api.telegram.org
             CURLOPT_IPRESOLVE => defined('CURL_IPRESOLVE_V4') ? CURL_IPRESOLVE_V4 : 1,
         ];
+        if (defined('TELEGRAM_HTTP_PROXY') && TELEGRAM_HTTP_PROXY !== '') {
+            $curlOpts[CURLOPT_PROXY] = TELEGRAM_HTTP_PROXY;
+        }
         curl_setopt_array($ch, $curlOpts);
         $raw = curl_exec($ch);
         $curlErr = curl_error($ch);

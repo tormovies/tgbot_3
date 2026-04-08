@@ -1,3 +1,4 @@
 .env
+.proxy.env
 bot.txt
 data/
