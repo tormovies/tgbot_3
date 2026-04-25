@@ -15,6 +15,7 @@ const STATE_ORDER_DESCRIPTION = 'order_description';
 const STATE_ORDER_CONTACT = 'order_contact';
 const STATE_ORDER_CONFIRM = 'order_confirm';
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 МБ — лимит Telegram
+const MAX_UPDATE_AGE_SECONDS = 300; // Старые апдейты не обрабатываем, чтобы не накапливалась многочасовая задержка
 
 // --- API ---
 
@@ -160,6 +161,45 @@ function clearState(int $userId): void
     if (is_file($path)) {
         unlink($path);
     }
+}
+
+function offsetPath(): string
+{
+    return DATA_DIR . '/offset.txt';
+}
+
+function loadOffset(): int
+{
+    $path = offsetPath();
+    if (!is_file($path)) {
+        return 0;
+    }
+    $raw = trim((string) @file_get_contents($path));
+    if ($raw === '' || !ctype_digit($raw)) {
+        return 0;
+    }
+    return (int) $raw;
+}
+
+function saveOffset(int $offset): void
+{
+    if ($offset < 0) {
+        return;
+    }
+    @file_put_contents(offsetPath(), (string) $offset, LOCK_EX);
+}
+
+function extractUpdateTimestamp(array $update): ?int
+{
+    $messageDate = $update['message']['date'] ?? null;
+    if (is_int($messageDate) || ctype_digit((string) $messageDate)) {
+        return (int) $messageDate;
+    }
+    $callbackDate = $update['callback_query']['message']['date'] ?? null;
+    if (is_int($callbackDate) || ctype_digit((string) $callbackDate)) {
+        return (int) $callbackDate;
+    }
+    return null;
 }
 
 function saveOrderToFile(array $orderData): void
@@ -615,14 +655,21 @@ function run(): void
     $curlOn = function_exists('curl_init') ? 'yes' : 'no';
     fwrite(STDERR, date('c') . " Bot: polling started, curl={$curlOn}\n");
 
-    $offset = 0;
+    $offset = loadOffset();
     while (true) {
         $updates = apiRequest('getUpdates', ['offset' => $offset, 'timeout' => 30]);
         if (!is_array($updates)) {
+            usleep(500000);
             continue;
         }
         foreach ($updates as $update) {
             $offset = $update['update_id'] + 1;
+            saveOffset($offset);
+
+            $ts = extractUpdateTimestamp($update);
+            if ($ts !== null && (time() - $ts) > MAX_UPDATE_AGE_SECONDS) {
+                continue;
+            }
 
             // Inline-кнопка «Отправить заявку» (не исчезает при вводе текста)
             $callback = $update['callback_query'] ?? null;
